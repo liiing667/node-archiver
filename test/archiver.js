@@ -406,6 +406,139 @@ describe("archiver", function () {
         archive.finalize();
       });
     });
+    describe("#entry name conflicts", function () {
+      function run(archive, output, onClose) {
+        const conflicts = [];
+        const progress = [];
+        archive.on("entryNameConflict", function (err) {
+          conflicts.push(err);
+        });
+        archive.on("progress", function (value) {
+          progress.push(value);
+        });
+        const testStream = new WriteStream(output);
+        testStream.on("close", function () {
+          onClose(readJSON(output), conflicts, progress);
+        });
+        archive.pipe(testStream);
+        return archive;
+      }
+
+      it("should skip a duplicate file and report the conflict", function (done) {
+        const archive = run(
+          new JsonArchive(),
+          "tmp/conflict-file.json",
+          function (actual, conflicts, progress) {
+            assert.lengthOf(actual, 1);
+            assert.propertyVal(actual[0], "name", "same.txt");
+            assert.propertyVal(actual[0], "size", 19);
+            assert.lengthOf(conflicts, 1);
+            assert.propertyVal(conflicts[0], "code", "ENTRYNAMECONFLICT");
+            assert.propertyVal(
+              conflicts[0].data,
+              "existingName",
+              "same.txt",
+            );
+            assert.deepEqual(progress[progress.length - 1].entries, {
+              total: 1,
+              processed: 1,
+            });
+            done();
+          },
+        );
+        archive
+          .file("test/fixtures/test.txt", {
+            name: "same.txt",
+            date: testDate,
+          })
+          .file("test/fixtures/empty.txt", {
+            name: "same.txt",
+            date: testDate,
+          })
+          .finalize();
+      });
+
+      it("should skip duplicate directory entries and report the conflicts", function (done) {
+        mkdirp.sync("tmp/conflict-directory-a");
+        mkdirp.sync("tmp/conflict-directory-b");
+        writeFileSync("tmp/conflict-directory-a/level0.txt", "a");
+        writeFileSync("tmp/conflict-directory-b/level0.txt", "b");
+        const archive = run(
+          new JsonArchive(),
+          "tmp/conflict-directory.json",
+          function (actual, conflicts, progress) {
+            assert.lengthOf(actual, 1);
+            assert.propertyVal(actual[0], "name", "duplicate/level0.txt");
+            assert.propertyVal(actual[0], "size", 1);
+            assert.lengthOf(conflicts, 1);
+            assert.equal(
+              new Set(actual.map((entry) => entry.name)).size,
+              actual.length,
+            );
+            assert.deepEqual(progress[progress.length - 1].entries, {
+              total: 1,
+              processed: 1,
+            });
+            done();
+          },
+        );
+        archive
+          .directory("tmp/conflict-directory-a", "duplicate")
+          .directory("tmp/conflict-directory-b", "duplicate")
+          .finalize();
+      });
+
+      it("should detect conflicts between prefixes and explicit names", function (done) {
+        const archive = run(
+          new JsonArchive(),
+          "tmp/conflict-prefix.json",
+          function (actual, conflicts) {
+            assert.lengthOf(actual, 1);
+            assert.propertyVal(actual[0], "name", "nested/same.txt");
+            assert.lengthOf(conflicts, 1);
+            done();
+          },
+        );
+        archive
+          .append("prefix", { name: "same.txt", prefix: "nested" })
+          .file("test/fixtures/test.txt", { name: "nested/same.txt" })
+          .finalize();
+      });
+
+      it("should treat a file and directory with the same name as a conflict", function (done) {
+        const archive = run(
+          new JsonArchive(),
+          "tmp/conflict-file-directory.json",
+          function (actual, conflicts) {
+            assert.lengthOf(actual, 1);
+            assert.propertyVal(actual[0], "name", "node");
+            assert.propertyVal(actual[0], "type", "file");
+            assert.lengthOf(conflicts, 1);
+            done();
+          },
+        );
+        archive
+          .append("file", { name: "node" })
+          .append(null, { name: "node/" })
+          .finalize();
+      });
+
+      it("should follow platform case sensitivity", function (done) {
+        const archive = run(
+          new JsonArchive(),
+          "tmp/conflict-case.json",
+          function (actual, conflicts) {
+            assert.lengthOf(actual, win32 ? 1 : 2);
+            assert.lengthOf(conflicts, win32 ? 1 : 0);
+            done();
+          },
+        );
+        archive
+          .append("first", { name: "Case.txt" })
+          .append("second", { name: "case.txt" })
+          .finalize();
+      });
+    });
   });
   describe("#symlink", function () {
     var actual;
