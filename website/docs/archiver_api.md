@@ -24,6 +24,7 @@ The `options` object may include the following properties as well as all [Stream
 ##### Core Options
 
 - `statConcurrency` - _Number_ (default 4) - Sets the number of workers used to process the internal fs stat queue.
+- `maxSize` - _Number_ (default 32 MiB) - Maximum number of bytes buffered for TAR or JSON entries whose input stream has no known length. Set to `0` or `Infinity` to disable the limit.
 
 ##### ZIP Options
 

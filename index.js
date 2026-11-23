@@ -4,6 +4,12 @@ import Tar from "./lib/plugins/tar.js";
 import Json from "./lib/plugins/json.js";
 
 export { Archiver };
+export {
+  DEFAULT_MAX_STREAM_SIZE,
+  MAX_BUFFER_SIZE,
+  MAX_STREAM_BYTES,
+  MAX_STREAM_SIZE,
+} from "./lib/utils.js";
 
 export class ZipArchive extends Archiver {
   constructor(options) {
