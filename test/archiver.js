@@ -3,6 +3,7 @@ import {
   chmodSync,
   createReadStream,
   createWriteStream,
+  lstatSync,
   statSync,
   symlinkSync,
   unlinkSync,
@@ -446,5 +447,93 @@ describe("archiver", function () {
         493,
       );
     });
+  });
+});
+
+describe("symlink containment", function () {
+  const root = "tmp/symlink-root";
+  const link = root + "/link";
+
+  before(function () {
+    if (win32) {
+      this.skip();
+      return;
+    }
+    mkdirp.sync(root);
+    writeFileSync(root + "/a.txt", "a");
+    writeFileSync(root + "/target-b.txt", "b");
+    try {
+      unlinkSync(link);
+    } catch (err) {
+      // A previous interrupted run may have left the link behind.
+    }
+    symlinkSync("a.txt", link);
+  });
+
+  after(function () {
+    if (win32) {
+      return;
+    }
+    try {
+      unlinkSync(link);
+    } catch (err) {
+      // The link may already be gone if setup or the test failed.
+    }
+  });
+
+  it("retries a changed link instead of pairing the old target with new stats", function (done) {
+    const staleStats = lstatSync(link);
+    unlinkSync(link);
+    symlinkSync("target-b.txt", link);
+    const freshStats = lstatSync(link);
+
+    const archive = new JsonArchive();
+    const stream = new WriteStream("tmp/symlink-race.json");
+    stream.on("close", function () {
+      const actual = readJSON("tmp/symlink-race.json");
+      const entry = actual.find((item) => item.name === "link");
+      assert.isOk(entry);
+      assert.equal(entry.linkname, "target-b.txt");
+      assert.equal(new Date(entry.date).getTime(), freshStats.mtime.getTime());
+      done();
+    });
+    archive.pipe(stream);
+    archive.file(link, { name: "link", stats: staleStats }).finalize();
+  });
+
+  it("rejects a programmatic link that escapes the archive root", function (done) {
+    const warnings = [];
+    const archive = new JsonArchive();
+    const stream = new WriteStream("tmp/symlink-outside.json");
+    archive.on("warning", function (warning) {
+      warnings.push(warning);
+    });
+    stream.on("close", function () {
+      const actual = readJSON("tmp/symlink-outside.json");
+      assert.isArray(actual);
+      assert.isUndefined(actual.find((item) => item.name === "escape"));
+      assert.lengthOf(warnings, 1);
+      assert.equal(warnings[0].code, "SYMLINKOUTSIDE");
+      assert.equal(warnings[0].data.stage, "accept");
+      assert.equal(warnings[0].data.name, "escape");
+      assert.equal(warnings[0].data.originalTarget, "../../etc/passwd");
+      done();
+    });
+    archive.pipe(stream);
+    archive.symlink("escape", "../../etc/passwd").finalize();
+  });
+
+  it("keeps a relative link whose target remains inside the source tree", function (done) {
+    const archive = new JsonArchive();
+    const stream = new WriteStream("tmp/symlink-relative.json");
+    stream.on("close", function () {
+      const actual = readJSON("tmp/symlink-relative.json");
+      const entry = actual.find((item) => item.name === "link");
+      assert.isOk(entry);
+      assert.equal(entry.linkname, "target-b.txt");
+      done();
+    });
+    archive.pipe(stream);
+    archive.file(link, { name: "link" }).finalize();
   });
 });
